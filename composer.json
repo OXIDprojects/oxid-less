@@ -1,6 +1,10 @@
 {
     "name": "ra/less",
     "description": "This modul load less styles",
+    "license": "MIT",
+    "keywords": [
+        "oxid", "less", "compiler"
+    ],
     "authors": [
         {
             "name": "Robin Lehrmann",

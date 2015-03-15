@@ -9,6 +9,8 @@
  * @link      http://www.renzel-agentur.de/
  */
 
+require_once OX_BASE_PATH . '/core/smarty/plugins/function.oxstyle.php';
+
 /**
  * less load smarty plugin
  *
@@ -20,14 +22,16 @@
 function smarty_function_lessload($params, $smarty)
 {
     $myConfig = oxRegistry::getConfig();
-    $sShopUrl = oxRegistry::getConfig()->getShopUrl();
+    $sShopUrl = oxRegistry::getConfig()->getCurrentShopUrl();
+    $blIsModule = false;
 
     if ($params['include']) {
         $sStyle = $params['include'];
         $sLessFile = $sStyle;
 
-        if (!preg_match('#^http?://#', $sStyle)) {
+        if (preg_match('#^http?://#', $sStyle)) {
             $sLessFile = str_replace($sShopUrl, OX_BASE_PATH, $sLessFile);
+            $blIsModule = true;
         }
 
         /* @var $oActiveTheme \oxTheme */
@@ -35,12 +39,15 @@ function smarty_function_lessload($params, $smarty)
         $oActiveTheme->load($oActiveTheme->getActiveThemeId());
         $iShop = $myConfig->getShopId();
 
-        do {
-            $sLessPathNFile = $myConfig->getDir($sLessFile, 'src/less', $myConfig->isAdmin(), oxRegistry::getLang()->getBaseLanguage(), $iShop, $oActiveTheme->getId());
-            $oActiveTheme = $oActiveTheme->getParent();
-        } while (!is_null($oActiveTheme) && !file_exists($sLessPathNFile));
+        // less file not in a module path
+        if (!$blIsModule) {
+            do {
+                $sLessPathNFile = $myConfig->getDir($sLessFile, 'src/less', $myConfig->isAdmin(), oxRegistry::getLang()->getBaseLanguage(), $iShop, $oActiveTheme->getId());
+                $oActiveTheme = $oActiveTheme->getParent();
+            } while (!is_null($oActiveTheme) && !file_exists($sLessPathNFile));
 
-        $sLessFile = $sLessPathNFile;
+            $sLessFile = $sLessPathNFile;
+        }
 
         // File not found ?
         if (!$sLessFile) {
@@ -48,6 +55,7 @@ function smarty_function_lessload($params, $smarty)
                 $sError = "{lessload} resource not found: " . htmlspecialchars($params['include']);
                 trigger_error($sError, E_USER_WARNING);
             }
+
             return;
         } else {
             $sCssUrl = compile($sShopUrl, $sLessFile, $myConfig);
@@ -56,7 +64,7 @@ function smarty_function_lessload($params, $smarty)
 
     $params['include'] = $sCssUrl;
     if ($params['blNotUseOxStyle']) {
-        return '<link rel="stylesheet" type="text/css" href="'.$sCssUrl.'" />'.PHP_EOL;
+        return '<link rel="stylesheet" type="text/css" href="' . $sCssUrl . '" />' . PHP_EOL;
     } else {
         return smarty_function_oxstyle($params, $smarty);
     }
@@ -73,24 +81,29 @@ function getThemeConfigVar($sKey)
 {
     /** @var \oxTheme $oTheme */
     $oTheme = oxNew('oxTheme');
+
     return oxRegistry::getConfig()->getShopConfVar($sKey, null, 'theme:' . $oTheme->getActiveThemeId());
 }
+
 
 /**
  * compile less file
  *
- * @param string $sShopUrl  shop url
- * @param string $sLessFile less file
+ * @param string $sShopUrl  shopurl
+ * @param string $sLessFile lessfilepath
+ * @param object $myConfig  shopconfig
  *
- * @return string
+ * @return mixed|null
  */
-function compile($sShopUrl, $sLessFile)
+function compile($sShopUrl, $sLessFile, $myConfig)
 {
-    $myConfig = oxRegistry::getConfig();
-    $sFilename = str_replace('/', '_', str_replace($sShopUrl, '', $sLessFile));
-    $sFilename = md5($sFilename) . '.css';
+    $sFilename = str_replace('/', '_', $sLessFile);
+    $sFilename = md5($sFilename . oxRegistry::getConfig()->getShopId()) . '.css';
 
     $sGenDir = $myConfig->getOutDir() . 'gen/';
+    if (!is_dir($sGenDir)) {
+        mkdir($sGenDir);
+    }
 
     $parser = new Less_Parser(
         array(
@@ -103,18 +116,18 @@ function compile($sShopUrl, $sLessFile)
     $oTheme = oxNew('oxTheme');
 
     try {
-        $parser->parseFile($sLessFile, $sShopUrl . $myConfig->getOutDir(false) . $oTheme->getActiveThemeId() . '/src/');
-
-        foreach (explode(',', trim($myConfig->getShopConfVar('sVariables', null, 'module:raless'))) as $sVar) {
-            if (!is_null(getThemeConfigVar($sVar)) && getThemeConfigVar($sVar) !== '') {
-                $parser->ModifyVars(array($sVar => getThemeConfigVar($sVar)));
-            }
-        }
-
         $sCssFile = $sGenDir . $sFilename;
         $sCssFile = str_replace('.less', '.css', $sCssFile);
         $sCssUrl = str_replace($myConfig->getOutDir(), $myConfig->getCurrentShopUrl() . 'out/', $sCssFile);
-        file_put_contents($sCssFile, $parser->getCss());
+        if (!file_exists($sCssFile) || !$myConfig->isProductiveMode()) {
+            $parser->parseFile($sLessFile, $sShopUrl . $myConfig->getOutDir(false) . $oTheme->getActiveThemeId() . '/src/');
+            foreach (explode(',', trim($myConfig->getShopConfVar('sVariables', null, 'module:raless'))) as $sVar) {
+                if (!is_null(getThemeConfigVar($sVar)) && getThemeConfigVar($sVar) !== '') {
+                    $parser->ModifyVars(array($sVar => getThemeConfigVar($sVar)));
+                }
+            }
+            file_put_contents($sCssFile, $parser->getCss());
+        }
 
         return $sCssUrl;
     } catch (Exception $e) {
@@ -122,5 +135,6 @@ function compile($sShopUrl, $sLessFile)
             trigger_error($e->getMessage(), E_USER_WARNING);
         }
     }
+
     return null;
 }
